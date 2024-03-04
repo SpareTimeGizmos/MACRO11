@@ -38,6 +38,15 @@ DAMAGE.
 
 #include "stream2.h"
 
+#ifndef __linux__
+// [RLA] Need these for Visual Studio!
+#define strncasecmp _strnicmp
+#define strcasecmp _stricmp
+#define strtok_r strtok_s
+// [RLA] This is a bit dubious, but ...
+#define stpncpy strncpy
+#endif
+
 char           *my_ultoa(
     unsigned long val,
     char *buf,
@@ -55,13 +64,11 @@ void            my_searchenv(
 /* Cover a few platform-dependencies */
 
 #ifdef WIN32
-typedef unsigned __int64 ulong64;
 
 #define strdup _strdup
 #define putenv _putenv
 #define PATHSEP ";"
 #else
-typedef unsigned long long ulong64;
 
 #define PATHSEP ":"
 #endif
@@ -77,6 +84,9 @@ typedef unsigned long long ulong64;
 #define SIZEOF_MEMBER(s, m) (sizeof((s *)0)->m)
 
 void            upcase(
+    char *str);
+
+void            downcase(
     char *str);
 
 void            padto(

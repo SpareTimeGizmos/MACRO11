@@ -29,7 +29,7 @@ typedef struct rept_stream {
 
 /* rept_stream_gets gets a line from a repeat stream.  At the end of
    each count, the coutdown is decreated and the stream is reset to
-   it's beginning. */
+   its beginning. */
 
 char           *rept_stream_gets(
     STREAM *str)
@@ -38,13 +38,14 @@ char           *rept_stream_gets(
     char           *cp;
 
     for (;;) {
+        if (rstr->count <= 0)
+            return NULL;
+
         if ((cp = buffer_stream_gets(str)) != NULL)
             return cp;
 
-        if (--rstr->count <= 0)
-            return NULL;
-
         buffer_stream_rewind(str);
+        rstr->count--;
     }
 }
 
@@ -83,6 +84,14 @@ STREAM         *expand_rept(
         free_tree(value);
         return NULL;
     }
+    /*
+     * Reading the next lines-to-be-repeated overwrites the line buffer
+     * that the caller is using. So for junk-at-end-of-line checking we
+     * need to do it here.
+     */
+    check_eol(stack, value->cp);
+
+    list_value(stack->top, value->data.lit);
 
     gb = new_buffer();
 
@@ -151,11 +160,10 @@ char           *irp_stream_gets(
         arg->next = NULL;
         arg->locsym = 0;
         arg->label = istr->label;
-        arg->value = getstring(cp, &cp);
+        arg->value = getstring_macarg(str, cp, &cp);
         cp = skipdelim(cp);
         istr->offset = (int) (cp - istr->items);
 
-        eval_arg(str, arg);
         buf = subst_args(istr->body, arg);
 
         free(arg->value);
@@ -211,6 +219,8 @@ STREAM         *expand_irp(
         free(label);
         return NULL;
     }
+
+    check_eol(stack, cp);
 
     gb = new_buffer();
 
@@ -339,6 +349,8 @@ STREAM         *expand_irpc(
         free(label);
         return NULL;
     }
+
+    check_eol(stack, cp);
 
     gb = new_buffer();
 

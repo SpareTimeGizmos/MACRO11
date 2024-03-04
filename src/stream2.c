@@ -43,7 +43,7 @@ DAMAGE.
 #include <stdarg.h>
 
 #include "util.h"
-
+#include "listing.h"      // [RLA]
 #include "stream2.h"
 
 /* BUFFER functions */
@@ -239,10 +239,11 @@ void buffer_stream_construct(
     bstr->stream.vtbl = &buffer_stream_vtbl;
 
     bstr->stream.name = memcheck(strdup(name));
+    bstr->stream.line = 0;
+    bstr->stream.next = NULL;
 
     bstr->buffer = buffer_clone(buf);
     bstr->offset = 0;
-    bstr->stream.line = 0;
 }
 
 void buffer_stream_set_buffer(
@@ -288,11 +289,14 @@ static char    *file_gets(
     /* Read single characters, end of line when '\n' or '\f' hit */
 
     i = 0;
-    while (c = fgetc(fstr->fp), c != '\n' && c != '\f' && c != EOF) {
+    while (c = fgetc(fstr->fp), c != '\n' /*&& c != '\f'*/ && c != EOF) {
         if (c == 0)
             continue;                  /* Don't buffer zeros */
         if (c == '\r')
             continue;                  /* Don't buffer carriage returns either */
+        // [RLA]   Ignore form feeds, BUT set the force_new_page flag to force
+        // [RLA} a new listing page ...
+        if (c == '\f')  {force_new_page = 1;  continue;}
         if (i < STREAM_BUFFER_SIZE - 2)
             fstr->buffer[i++] = c;
     }
@@ -350,9 +354,10 @@ STREAM         *new_file_stream(
 
     str->stream.vtbl = &file_stream_vtbl;
     str->stream.name = memcheck(strdup(filename));
+    str->stream.line = 0;
+    str->stream.next = NULL;
     str->buffer = memcheck(malloc(STREAM_BUFFER_SIZE));
     str->fp = fp;
-    str->stream.line = 0;
 
     return &str->stream;
 }

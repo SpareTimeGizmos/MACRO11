@@ -46,6 +46,10 @@ MACRO          *defmacro(
     STACK *stack,
     int called);
 
+#define CALLED_NORMAL           0
+#define CALLED_NOLIST           1
+#define CALLED_NODEFINE         2
+
 STREAM         *expandmacro(
     STREAM *refstr,
     MACRO *mac,
@@ -59,9 +63,10 @@ void            read_body(
     BUFFER *gb,
     char *name,
     int called);
-void            eval_arg(
+char           *getstring_macarg(
     STREAM *refstr,
-    ARG *arg);
+    char *cp,
+    char **endp);
 BUFFER         *subst_args(
     BUFFER *text,
     ARG *args);

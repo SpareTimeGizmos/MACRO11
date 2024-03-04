@@ -31,14 +31,19 @@ extern int      list_bex;       /* option to show binary */
 extern int      list_level;     /* Listing control level.  .LIST
                                    increments; .NLIST decrements */
 
-extern int		list_hexout ;      /* show assembled output in hex notation (standard is octal)*/
-
-//extern                               char   *listline;               /* Source lines */
+extern int      force_new_page; // [RLA] TRUE to force a new listing page
+extern int      lines_per_page; // [RLA] lines per listing page
+extern int      lines_this_page;// [RLA] lines printed on this page
+extern char     program_title[];   // [RLA] title string from .TITLE 
+extern char     current_subtitle[];// [RLA] subtitle string from .SBTTL
 
 extern FILE    *lstfile;
 
+extern int      list_pass_0;    /* Also list what happens during the first pass */
+
 #endif
 
+void new_listing_page(void);  // [RLA]
 
 void            list_word(
     STREAM *str,
@@ -48,6 +53,10 @@ void            list_word(
     char *flags);
 
 void            list_value(
+    STREAM *str,
+    unsigned word);
+
+void            list_location(
     STREAM *str,
     unsigned word);
 

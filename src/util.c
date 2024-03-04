@@ -55,6 +55,18 @@ DAMAGE.
 #include <unistd.h>
 #endif
 
+static void my_searchenv1(
+    char *name,
+    char *envname,
+    char *hitfile,
+    int hitlen);
+
+static void my_searchenv2(
+    char *name,
+    char *envname,
+    char *hitfile,
+    int hitlen);
+
 /* Sure, the library typically provides some kind of
     ultoa or _ultoa function.  But since it's merely typical
     and not standard, and since the function is so simple,
@@ -118,9 +130,8 @@ char           *my_ltoa(
   environment variable.  I duplicate that function for portability.
   Note also that mine avoids destination buffer overruns.
 
-  Note: uses strtok.  This means it'll screw you up if you
-  expect your strtok context to remain intact when you use
-  this function.
+  Added functionality to lowercase the file name and to remove the
+  device name and directory.
 */
 
 void my_searchenv(
@@ -129,9 +140,69 @@ void my_searchenv(
     char *hitfile,
     int hitlen)
 {
+    my_searchenv1(name, envname, hitfile, hitlen);
+    if (*hitfile) {
+        return;
+    }
+
+    char *copy = memcheck(strdup(name));
+    downcase(copy);
+    my_searchenv1(copy, envname, hitfile, hitlen);
+    free(copy);
+}
+
+static void my_searchenv1(
+    char *name,
+    char *envname,
+    char *hitfile,
+    int hitlen)
+{
+    my_searchenv2(name, envname, hitfile, hitlen);
+    if (*hitfile) {
+        return;
+    }
+
+    /*
+     * Parse DEV:[DIR]NAME
+     * while re-trying the search after DEV: and after [DIR].
+     *
+     * Let's not be too critical about the characters we allow in those.
+     */
+    char *p = name;
+    char c;
+
+    while ((c = *p++)) {
+        if (c == ':') {
+            my_searchenv2(p, envname, hitfile, hitlen);
+            if (*hitfile) {
+                return;
+            }
+        }
+        if (c == '[') {
+            char *enddir = strchr(p, ']');
+            if (enddir == NULL) {
+                return; /* weird syntax */
+            }
+            p = enddir + 1;
+            my_searchenv2(p, envname, hitfile, hitlen);
+            return;
+        }
+    }
+
+    return;
+}
+
+static void my_searchenv2(
+    char *name,
+    char *envname,
+    char *hitfile,
+    int hitlen)
+{
     char           *env;
     char           *envcopy;
+    char           *envcopy2;
     char           *cp;
+    char           *last;
 
     *hitfile = 0;                      /* Default failure indication */
 
@@ -149,14 +220,16 @@ void my_searchenv(
     }
 
     env = getenv(envname);
-    if (env == NULL)
-        return;                        /* Variable not defined, no search. */
+    if (env == NULL) {                 /* If not defined, search in */
+        env = ".";                     /* current directory */
+    }
 
-    envcopy = strdup(env);             /* strtok destroys it's text
+    envcopy = strdup(env);             /* strtok destroys its text
                                           argument.  I don't want the return
                                           value from getenv destroyed. */
 
-    while ((cp = strtok(envcopy, PATHSEP)) != NULL) {
+    envcopy2 = envcopy;
+    while ((cp = strtok_r(envcopy2, PATHSEP, &last)) != NULL) {
         struct stat     info;
         char           *concat = malloc(strlen(cp) + strlen(name) + 2);
 
@@ -176,10 +249,12 @@ void my_searchenv(
             free(envcopy);
             return;
         }
+        envcopy2 = NULL;
     }
 
     /* If I fall out of that loop, then hitfile indicates no match,
        and return. */
+    free(envcopy);
 }
 
 
@@ -204,7 +279,18 @@ void upcase(
     char *str)
 {
     while (*str) {
-        *str = toupper(*str);
+        *str = toupper((unsigned char)*str);
+        str++;
+    }
+}
+
+/* downcase turns a string to lower case */
+
+void downcase(
+    char *str)
+{
+    while (*str) {
+        *str = tolower((unsigned char)*str);
         str++;
     }
 }

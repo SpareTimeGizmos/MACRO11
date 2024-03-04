@@ -6,8 +6,6 @@
 #include "mlb.h"
 #include "symbols.h"
 #include "extree.h"
-//#include "stream2.h"
-//#include "object.h"
 
 
 
@@ -20,6 +18,7 @@ typedef struct cond {
     int             line;
 } COND;
 
+#define SECT_STACK_SIZE 32
 
 #ifndef ASSEMBLE_GLOBALS__C
 /* GLOBAL VARIABLES */
@@ -27,22 +26,30 @@ extern int      pass;           /* The current assembly pass.  0 = first pass */
 extern int      stmtno;         /* The current source line number */
 extern int      radix;          /* The current input conversion radix */
 extern int      lsb;            /* The current local symbol section identifier */
-extern int      last_lsb;       /* The last block in which a macro
+extern int      lsb_used;       /* Whether there was a local symbol using this lsb */
+extern int      next_lsb;       /* The number of the next local symbol block */
+extern int      last_macro_lsb; /* The last block in which a macro
                                    automatic label was created */
 
 extern int      last_locsym;    /* The last local symbol number generated */
 
 extern int      enabl_debug;    /* Whether assembler debugging is enabled */
 
+extern int      opt_enabl_ama;  /* May be changed by command line */
+
 extern int      enabl_ama;      /* When set, chooses absolute (037) versus
                                    PC-relative */
-/* (067) addressing mode */
+                                /* (067) addressing mode */
 extern int      enabl_lsb;      /* When set, stops non-local symbol
                                    definitions from delimiting local
                                    symbol sections. */
 
 extern int      enabl_gbl;      /* Implicit definition of global symbols */
 
+extern int      enabl_lc;       /* If lowercase disabled, convert assembler
+                                   source to upper case. */
+extern int      enabl_lcm;      /* If lowercase disabled, .IF IDN/DIF are
+                                   case-sensitive. */
 extern int      suppressed;     /* Assembly suppressed by failed conditional */
 
 extern MLB     *mlbs[MAX_MLBS]; /* macro libraries specified on the command line */
@@ -51,7 +58,8 @@ extern int      nr_mlbs;        /* Number of macro libraries */
 extern COND     conds[MAX_CONDS];       /* Stack of recent conditions */
 extern int      last_cond;      /* 0 means no stacked cond. */
 
-extern SECTION *sect_stack[32]; /* 32 saved sections */
+extern SECTION *sect_stack[SECT_STACK_SIZE]; /* 32 saved sections */
+extern int      dot_stack[SECT_STACK_SIZE];  /* 32 saved sections */
 extern int      sect_sp;        /* Stack pointer */
 
 extern char    *module_name;    /* The module name (taken from the 'TITLE'); */
@@ -63,7 +71,7 @@ extern EX_TREE *xfer_address;   /* The transfer address */
 extern SYMBOL  *current_pc;     /* The current program counter */
 
 extern unsigned last_dot_addr;  /* Last coded PC... */
-extern SECTION *last_dot_section;       /* ...and it's program section */
+extern SECTION *last_dot_section;       /* ...and its program section */
 
 /* The following are dummy psects for symbols which have meaning to
    the assembler: */

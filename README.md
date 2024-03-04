@@ -1,18 +1,12 @@
 # MACRO11
-MACRO11 is an PDP-11 cross assembler, written in C.
-Projects files are included only for Win32 platform MS Visual Studio 2015, as it's been used as part of PDP11GUI.
+MACRO11 is an PDP-11 cross assembler, written in C, originally by Richard Krebiehls in 2008.  This copy was forked from Joerge Hoppe's version on GitHub and further modified with additional changes by Rhialto and Spare Time Gizmos.
 
-This MACRO11 was forked from Richard Krebiehls version in 2008. Thanks!
-[Richard's version is here.](http://www.dbit.com/pub/pdp11/macro11/).
+  Spare Time Gizmos changes include
 
-Changes since then:
-* restructured the sources
-* bugfixes. For example "JMP Rn is illegal" on "jmp (rx)".
-* added option "-listhex" to generate listings in hex instead of octal (helpful for work with modern logic analyzers).
-
-Also see my [MACRO11 page](http://www.retrocmp.com/tools/macro-11-on-windows).
-
-Apparently in 2009 my code was forked into github, without notifying me.
-See github.com/shattered/macro11 !
-
-The changes made there were also merged into this code in Nov 2016.
+  * Set a title string via .TITLE and display it in the listing.
+  * Set a subtitle string via .SBTTL and display that too.
+  * Generate a table of contents from the subtitles.
+  * Make .PAGE actually start a new listing page.
+  * Allow form feed in source file to start a new listing page.
+  * Add the current time and date to the listing.
+  * Miscellaneous fixes to compile under Visual Studio 2022.

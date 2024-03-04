@@ -122,7 +122,7 @@ static int store_internal_word(
     unsigned word)
 {
     change_dot(tr, size);
-    list_word(str, DOT, word, size, "");
+    list_word(str, DOT, word, size, "'");
     return text_internal_word(tr, &DOT, size, word);
 }
 
@@ -134,7 +134,7 @@ static int store_psect_displaced_offset_word(
     char *name)
 {
     change_dot(tr, size);
-    list_word(str, DOT, word, size, "");
+    list_word(str, DOT, word, size, "'");
     return text_psect_displaced_offset_word(tr, &DOT, size, word, name);
 }
 
@@ -146,7 +146,7 @@ static int store_psect_offset_word(
     char *name)
 {
     change_dot(tr, size);
-    list_word(str, DOT, word, size, "");
+    list_word(str, DOT, word, size, "'");
     return text_psect_offset_word(tr, &DOT, size, word, name);
 }
 
@@ -209,11 +209,9 @@ void implicit_gbl(
     switch (value->type) {
     case EX_UNDEFINED_SYM:
         {
-            SYMBOL         *sym;
-
             if (!(value->data.symbol->flags & SYMBOLFLAG_LOCAL)) {      /* Unless it's a
                                                                            local symbol, */
-                sym = add_sym(value->data.symbol->label, 0, SYMBOLFLAG_GLOBAL, &absolute_section, &implicit_st);
+                add_sym(value->data.symbol->label, 0, SYMBOLFLAG_GLOBAL, &absolute_section, &implicit_st);
             }
         }
         break;
@@ -227,8 +225,9 @@ void implicit_gbl(
     case EX_DIV:
     case EX_AND:
     case EX_OR:
+    case EX_LSH:
         implicit_gbl(value->data.child.right);
-        /* falls into... */
+        /* FALLS THROUGH */
     case EX_COM:
     case EX_NEG:
         implicit_gbl(value->data.child.left);
@@ -252,8 +251,10 @@ void migrate_implicit(
 
     for (isym = first_sym(&implicit_st, &iter); isym != NULL; isym = next_sym(&implicit_st, &iter)) {
         sym = lookup_sym(isym->label, &symbol_st);
-        if (sym)
+        if (sym) {
             continue;                  // It's already in there.  Great.
+        }
+        isym->flags |= SYMBOLFLAG_IMPLICIT_GLOBAL;
         sym = add_sym(isym->label, isym->value, isym->flags, isym->section, &symbol_st);
         // Just one other thing - migrate the stmtno
         sym->stmtno = isym->stmtno;
@@ -467,12 +468,18 @@ void mode_extension(
     }
 
     if (value->type == EX_LIT) {
-        if (mode->rel)                 /* PC-relative? */
-            store_displaced_word(str, tr, 2, value->data.lit);
-        else
+        if (mode->rel) {              /* PC-relative? */
+            if (current_pc->section->flags & PSECT_REL) {
+                store_displaced_word(str, tr, 2, value->data.lit);
+            } else {
+                /* I can compute this myself. */
+                store_word(str, tr, 2, value->data.lit - DOT - 2);
+            }
+        } else {
             store_word(str, tr, 2, value->data.lit);    /* Just a
                                                            known
                                                            value. */
+        }
     } else if (express_sym_offset(value, &sym, &offset)) {
         if ((sym->flags & (SYMBOLFLAG_GLOBAL | SYMBOLFLAG_DEFINITION)) == SYMBOLFLAG_GLOBAL) {
             /* Reference to a global symbol. */
@@ -553,7 +560,7 @@ int eval_undefined(
 }
 
 /* push_cond - a new conditional (.IF) block has been activated.  Push
-   it's context. */
+   its context. */
 
 void push_cond(
     int ok,
@@ -585,6 +592,8 @@ void go_section(
     TEXT_RLD *tr,
     SECTION *sect)
 {
+    (void)tr;
+
     if (current_pc->section == sect)
         return;                        /* This is too easy */
 
@@ -635,20 +644,39 @@ int do_word(
     char *cp,
     int size)
 {
+    int comma;
+
     if (size == 2 && (DOT & 1)) {
         report(stack->top, ".WORD on odd boundary\n");
         store_word(stack->top, tr, 1, 0);       /* Align it */
     }
 
+    cp = skipwhite(cp);
+
     do {
-        EX_TREE        *value = parse_expr(cp, 0);
+        if (cp[0] == ',') {
+            /* Empty expressions count as 0 */
+            store_word(stack->top, tr, size, 0);
+        } else {
+            EX_TREE        *value = parse_expr(cp, 0);
 
-        store_value(stack, tr, size, value);
+            if (value->type != EX_ERR && value->cp > cp) {
+                store_value(stack, tr, size, value);
 
-        cp = skipdelim(value->cp);
+                cp = value->cp;
+            } else {
+                report(stack->top, "Invalid expression in .WORD\n");
+                cp = "";                /* force loop to end */
+            }
 
-        free_tree(value);
-    } while (cp = skipdelim(cp), !EOL(*cp));
+            free_tree(value);
+        }
+    } while (cp = skipdelim_comma(cp, &comma), !EOL(*cp));
+
+    if (comma) {
+        /* Trailing empty expressions count as 0 */
+        store_word(stack->top, tr, size, 0);
+    }
 
     return 1;
 }
@@ -664,6 +692,10 @@ int check_branch(
     int max)
 {
     int             s_offset;
+
+    if (offset & 1) {
+        report(stack->top, "Bad branch target (odd address)\n");
+    }
 
     /* Sign-extend */
     if (offset & 0100000)
@@ -693,8 +725,15 @@ void write_globals(
     SYMBOL_ITER     sym_iter;
     int             isect;
 
-    if (obj == NULL)
-        return;                        /* Nothing to do if no OBJ file. */
+    if (obj == NULL) {
+        for (isect = 0; isect < sector; isect++) {
+            psect = sections[isect];
+
+            psect->sector = isect;     /* Assign it a sector */
+            psect->pc = 0;             /* Reset its PC for second pass */
+        }
+        return;                        /* Nothing more to do if no OBJ file. */
+    }
 
     gsd_init(&gsd, obj);
 
@@ -703,7 +742,7 @@ void write_globals(
     if (ident)
         gsd_ident(&gsd, ident);
 
-    /* write out each PSECT with it's global stuff */
+    /* write out each PSECT with its global stuff */
     /* Sections must be written out in the order that they
        appear in the assembly file.  */
     for (isect = 0; isect < sector; isect++) {
@@ -711,7 +750,7 @@ void write_globals(
 
         gsd_psect(&gsd, psect->label, psect->flags, psect->size);
         psect->sector = isect;         /* Assign it a sector */
-        psect->pc = 0;                 /* Reset it's PC for second pass */
+        psect->pc = 0;                 /* Reset its PC for second pass */
 
         sym = first_sym(&symbol_st, &sym_iter);
         while (sym) {
@@ -733,13 +772,13 @@ void write_globals(
     if (xfer_address->type == EX_LIT) {
         gsd_xfer(&gsd, ". ABS.", xfer_address->data.lit);
     } else {
-        SYMBOL         *sym;
+        SYMBOL         *lsym;
         unsigned        offset;
 
-        if (!express_sym_offset(xfer_address, &sym, &offset)) {
+        if (!express_sym_offset(xfer_address, &lsym, &offset)) {
             report(NULL, "Illegal program transfer address\n");
         } else {
-            gsd_xfer(&gsd, sym->section->label, sym->value + offset);
+            gsd_xfer(&gsd, lsym->section->label, lsym->value + offset);
         }
     }
 

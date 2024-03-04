@@ -1,30 +1,5 @@
-#ifndef MACRO11_H
-#define MACRO11_H
-
-//[RLA]#include "git-info.h"
-
-#ifndef __linux__
-// [RLA] Need these for Visual Studio!
-#define strncasecmp _strnicmp
-#define strcasecmp _stricmp
-#define strtok_r strtok_s
-// [RLA] This is a bit dubious, but ...
-#define stpncpy strncpy
-#endif
-
-#define BASE_VERSION "0.8"  // [RLA]
-
-#if defined(GIT_VERSION)
-#define VERSIONSTR BASE_VERSION" ("GIT_VERSION"\n\t"GIT_AUTHOR_DATE")"
-#else
-#define VERSIONSTR BASE_VERSION" (20 April 2023)" // [RLA]
-/*#define VERSIONSTR "0.3 (April 21, 2009)" */
-/*#define VERSIONSTR "0.2   July 15, 2001"  */
-#endif
-
-
 /*
-Copyright (c) 2001, Richard Krehbiel
+Copyright (c) 2017, Olaf Seibert
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -56,5 +31,54 @@ USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
 DAMAGE.
 */
 
+#include <stdlib.h>
+#include <string.h>
+#include "util.h"
+#include "mlb.h"
 
-#endif
+MLB_VTBL *mlb_vtbls[] = {
+    &mlb_rsx_vtbl,
+    &mlb_rt11_vtbl,
+    NULL
+};
+
+MLB     *mlb_open(
+    char *name,
+    int allow_object_library)
+{
+    MLB_VTBL *vtbl;
+    MLB *mlb = NULL;
+    int i;
+
+    for (i = 0; (vtbl = mlb_vtbls[i]); i++) {
+        mlb = vtbl->mlb_open(name, allow_object_library);
+        if (mlb != NULL) {
+            mlb->name = memcheck(strdup(name));
+            break;
+        }
+    }
+
+    return mlb;
+}
+
+BUFFER  *mlb_entry(
+    MLB *mlb,
+    char *name)
+{
+    return mlb->vtbl->mlb_entry(mlb, name);
+}
+
+void     mlb_close(
+    MLB *mlb)
+{
+    free(mlb->name);
+    mlb->vtbl->mlb_close(mlb);
+}
+
+void     mlb_extract(
+    MLB *mlb)
+{
+    mlb->vtbl->mlb_extract(mlb);
+}
+
+

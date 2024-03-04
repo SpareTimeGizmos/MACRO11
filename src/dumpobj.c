@@ -47,15 +47,22 @@ DAMAGE.
 
 #define WORD(cp) ((*(cp) & 0xff) + ((*((cp)+1) & 0xff) << 8))
 
+#define NPSECTS 256
+
+#ifndef DEFAULT_OBJECTFORMAT_RT11
+#define DEFAULT_OBJECTFORMAT_RT11       0
+#endif
+
 int             psectid = 0;
-char           *psects[256];
+char           *psects[NPSECTS];
 FILE           *bin = NULL;
 int             badbin = 0;
 int             xferad = 1;
 
 char           *readrec(
     FILE *fp,
-    int *len)
+    int *len,
+    int rt11)
 {
     int             c,
                     i;
@@ -64,29 +71,33 @@ char           *readrec(
 
     chksum = 0;
 
-    while (c = fgetc(fp), c != EOF && c == 0) ;
+    if (rt11) {
+        while (c = fgetc(fp), c != EOF && c == 0) ;
 
-    if (c == EOF)
-        return NULL;
+        if (c == EOF)
+            return NULL;
 
-    if (c != 1) {
-        fprintf(stderr, "Improperly formatted OBJ file (1)\n");
-        return NULL;                   // Not a properly formatted file.
+        if (c != 1) {
+            fprintf(stderr, "Improperly formatted OBJ file (1)\n");
+            return NULL;               /* Not a properly formatted file. */
+        }
+
+        chksum -= c;
+
+        c = fgetc(fp);
+        if (c != 0) {
+            fprintf(stderr, "Improperly formatted OBJ file (2)\n");
+            return NULL;               /* Not properly formatted */
+        }
+
+        chksum -= c;                   /* even though for 0 the checksum isn't changed... */
     }
-
-    chksum -= c;
-
-    c = fgetc(fp);
-    if (c != 0) {
-        fprintf(stderr, "Improperly formatted OBJ file (2)\n");
-        return NULL;                   // Not properly formatted
-    }
-
-    chksum -= c;                       // even though for 0 the checksum isn't changed...
 
     c = fgetc(fp);
     if (c == EOF) {
-        fprintf(stderr, "Improperly formatted OBJ file (3)\n");
+        if (rt11) {
+            fprintf(stderr, "Improperly formatted OBJ file (3)\n");
+        }
         return NULL;
     }
     *len = c;
@@ -103,7 +114,10 @@ char           *readrec(
 
     chksum -= c;
 
-    *len -= 4;                         // Subtract header and length bytes from length
+    if (rt11) {
+        *len -= 4;                     /* Subtract header and length bytes from length */
+    }
+
     if (*len < 0) {
         fprintf(stderr, "Improperly formatted OBJ file (5)\n");
         return NULL;
@@ -112,7 +126,7 @@ char           *readrec(
     buf = malloc(*len);
     if (buf == NULL) {
         fprintf(stderr, "Out of memory allocating %d bytes\n", *len);
-        return NULL;                   // Bad alloc
+        return NULL;                   /* Bad alloc */
     }
 
     i = fread(buf, 1, *len, fp);
@@ -125,14 +139,27 @@ char           *readrec(
     for (i = 0; i < *len; i++)
         chksum -= (buf[i] & 0xff);
 
-    c = fgetc(fp);
-    c &= 0xff;
-    chksum &= 0xff;
+    if (rt11) {
+        c = fgetc(fp);
+        c &= 0xff;
+        chksum &= 0xff;
 
-    if (c != chksum) {
-        free(buf);
-        fprintf(stderr, "Bad record checksum, " "calculated=%d, recorded=%d\n", chksum, c);
-        return NULL;
+        if (c != chksum) {
+            free(buf);
+            fprintf(stderr, "Bad record checksum, " "calculated=$%04x, recorded=$%04x\n", chksum, c);
+            return NULL;
+        }
+    } else {
+        if (*len & 1) {
+            /* skip 1 byte of padding */
+            c = fgetc(fp);
+            if (c == EOF) {
+                free(buf);
+                fprintf(stderr, "EOF where padding byte should be\n");
+                return NULL;
+            }
+
+        }
     }
 
     return buf;
@@ -329,18 +356,35 @@ void got_gsd(
             xferad = value;
             break;
         case 4:
-            sprintf(gsdline, "\tGLOBAL %s=%o %s flags=%o\n", name, value, cp[i + 4] & 8 ? "DEF" : "REF", flags);
+            sprintf(gsdline, "\tGLOBAL %s=%o %s%s%s %s flags=%o\n", name, value,
+                    flags &   01 ? "WEAK " : "",
+                    flags &   04 ? "LIB "  : "",
+                    flags &  010 ? "DEF"   : "REF",
+                    flags &  040 ? "REL"   : "ABS",
+                    flags);
             break;
         case 5:
-            sprintf(gsdline, "\tPSECT %s=%o flags=%o\n", name, value, flags);
+            sprintf(gsdline, "\tPSECT %s=%o %s%s %s %s %s %s %s flags=%o\n", name, value,
+                    flags &   01 ? "SAV " : "",
+                    flags &   02 ? "LIB " : "",
+                    flags &   04 ? "OVR"  : "CON",
+                    flags &  020 ? "RO"   : "RW",
+                    flags &  040 ? "REL"  : "ABS",
+                    flags & 0100 ? "GBL"  : "LCL",
+                    flags & 0200 ? "D"    : "I",
+                    flags);
             psects[psectid] = strdup(name);
             trim(psects[psectid++]);
+            psectid %= NPSECTS;
             break;
         case 6:
             sprintf(gsdline, "\tIDENT %s=%o flags=%o\n", name, value, flags);
             break;
         case 7:
             sprintf(gsdline, "\tVSECT %s=%o flags=%o\n", name, value, flags);
+            break;
+        case 010:
+            sprintf(gsdline, "\tCompletion Routine Name %s=%o flags=%o\n", name, value, flags);
             break;
         default:
             sprintf(gsdline, "\t***Unknown GSD entry type %d flags=%o\n", cp[i + 5] & 0xff, flags);
@@ -368,6 +412,13 @@ void got_endgsd(
 {
     int             i;
 
+    (void)cp;
+    (void)len;
+
+    if (nr_gsds == 0) {
+        return;
+    }
+
     qsort(all_gsds, nr_gsds, sizeof(char *), compare_gsdlines);
 
     printf("GSD:\n");
@@ -380,6 +431,9 @@ void got_endgsd(
     printf("ENDGSD\n");
 
     free(all_gsds);
+    all_gsds = NULL;
+    nr_gsds = 0;
+    gsdsize = 0;
 }
 
 unsigned        last_text_addr = 0;
@@ -495,7 +549,7 @@ void got_rld(
         case 014:
             rad50name(cp + i + 2, name);
 
-            printf("\tPSECT displaced%s %o=%s+%o\n", byte, addr, name, word);
+            printf("\tPSECT displaced%s %o=%s\n", byte, addr, name);
             i += 6;
             badbin = 1;
             break;
@@ -598,6 +652,7 @@ void got_isd(
     char *cp,
     int len)
 {
+    (void)cp;
     printf("ISD len=%o\n", len);
 }
 
@@ -605,6 +660,8 @@ void got_endmod(
     char *cp,
     int len)
 {
+    (void)cp;
+    (void)len;
     printf("ENDMOD\n");
 }
 
@@ -612,6 +669,8 @@ void got_libhdr(
     char *cp,
     int len)
 {
+    (void)cp;
+    (void)len;
     printf("LIBHDR\n");
 }
 
@@ -619,6 +678,8 @@ void got_libend(
     char *cp,
     int len)
 {
+    (void)cp;
+    (void)len;
     printf("LIBEND\n");
 }
 
@@ -628,18 +689,58 @@ int main(
 {
     int             len;
     FILE           *fp;
-    char           *cp;
+    int             arg;
+    int             rt11 = DEFAULT_OBJECTFORMAT_RT11;
+    char            *infile = 0;
+    char            *outfile = 0;
 
-    fp = fopen(argv[1], "rb");
-    if (fp == NULL)
-        return EXIT_FAILURE;
-    if (argv[2]) {
-        bin = fopen(argv[2], "wb");
-        if (bin == NULL)
-            return EXIT_FAILURE;
+    for (arg = 1; arg < argc; arg++) {
+        if (*argv[arg] == '-') {
+            char           *cp;
+
+            cp = argv[arg] + 1;
+            if (!strcasecmp(cp, "rt11")) {
+                rt11 = 1;
+            } else if (!strcasecmp(cp, "rsx")) {
+                rt11 = 0;
+            } else {
+                fprintf(stderr, "Unknown option %s\n", argv[arg]);
+                exit(EXIT_FAILURE);
+            }
+        }
+        else if (infile == 0) {
+            infile = argv[arg];
+        }
+        else if (outfile == 0) {
+            outfile = argv[arg];
+        }
+        else {
+            fprintf(stderr, "Extra parameter %s\n", argv[arg]);
+            exit(EXIT_FAILURE);
+        }
     }
 
-    while ((cp = readrec(fp, &len)) != NULL) {
+    if (infile == 0) {
+        fprintf(stderr, "Usage: dumpobj [ -rt11 ] [ -rsx ] input.obj [ output.obj ]\n");
+        exit(1);
+    }
+
+    fp = fopen(infile, "rb");
+    if (fp == NULL) {
+        fprintf(stderr, "Unable to open %s\n", infile);
+        return EXIT_FAILURE;
+    }
+    if (outfile != 0) {
+        bin = fopen(outfile, "wb");
+        if (bin == NULL) {
+            fprintf(stderr, "Unable to open %s\n", outfile);
+            return EXIT_FAILURE;
+        }
+    }
+
+    char           *cp;
+
+    while ((cp = readrec(fp, &len, rt11)) != NULL) {
         switch (cp[0] & 0xff) {
         case 1:
             got_gsd(cp, len);
@@ -666,7 +767,7 @@ int main(
             got_libend(cp, len);
             break;
         default:
-            printf("Unknown record type %d\n", cp[0] & 0xff);
+            printf("Unknown record type %o\n", cp[0] & 0xff);
             break;
         }
 

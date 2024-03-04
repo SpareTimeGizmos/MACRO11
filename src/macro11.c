@@ -53,12 +53,6 @@ DAMAGE.
 #include "object.h"
 #include "symbols.h"
 
-#ifndef WIN32
-#define stricmp strcasecmp
-#endif
-
-
-
 /* enable_tf is called by command argument parsing to enable and
    disable named options. */
 
@@ -67,31 +61,54 @@ static void enable_tf(
     int tf)
 {
     if (strcmp(opt, "AMA") == 0)
-        enabl_ama = tf;
+        opt_enabl_ama = tf;
     else if (strcmp(opt, "GBL") == 0)
-        enabl_gbl = tf;
+        enabl_gbl = tf;         /* Unused in pass 2 */
     else if (strcmp(opt, "ME") == 0)
         list_me = tf;
     else if (strcmp(opt, "BEX") == 0)
         list_bex = tf;
     else if (strcmp(opt, "MD") == 0)
         list_md = tf;
-    else if (strcmp(opt, "LISTHEX") == 0) // extension Joerg Hoppe
-        list_hexout = tf;
 }
 
-//JH:
+/*JH:*/ // [RLA]
 static void print_version(
     FILE *strm)
 {
     fprintf(strm, "macro11 - portable MACRO11 assembler for DEC PDP-11\n");
     fprintf(strm, "  Version %s\n", VERSIONSTR);
     fprintf(strm, "  Copyright 2001 Richard Krehbiel,\n");
-    fprintf(strm, "  modified 2009-2016 by Joerg Hoppe and github/shattered.\n");
+    fprintf(strm, "  modified 2009 by Joerg Hoppe,\n");
+    fprintf(strm, "  modified 2015-2017,2020 by Olaf 'Rhialto' Seibert.\n");
+    fprintf(strm, "  modified 2021-2023 by Robert Armstrong.\n");
 }
 
+static void append_env(
+    char *envname,
+    char *value)
+{
+    char           *env = getenv(envname);
+    char           *temp;
 
-//JH:
+    if (env == NULL)
+        env = "";
+
+    temp = memcheck(malloc(strlen(envname) +
+                           1 +
+                           strlen(env) +
+                           1 +
+                           strlen(value) +
+                           1));
+    strcpy(temp, envname);
+    strcat(temp, "=");
+    strcat(temp, env);
+    strcat(temp, PATHSEP);
+    strcat(temp, value);
+    putenv(temp);
+}
+
+/*JH:*/
 static void print_help(
     void)
 {
@@ -99,7 +116,7 @@ static void print_help(
     print_version(stdout);
     printf("\n");
     printf("Usage:\n");
-    printf("  macro11 [-o <file>] [-l [<file>]] \n");
+    printf("  macro11 [-o <file>] [-l [<file>]] [-P <lines>]\n");
     printf("          [-h] [-v][-e <option>] [-d <option>]\n");
     printf("          [-ysl <num>] [-yus] \n");
     printf("          [-m <file>] [-p <directory>] [-x]\n");
@@ -109,38 +126,45 @@ static void print_help(
     printf("<inputfile>  MACRO11 source file(s) to assemble\n");
     printf("\n");
     printf("Options:\n");
-    printf("-d  disable <option> (see below)\n");
-    printf("-e  enable <option> (see below)\n");
-    printf("-h  print this help\n");
-    printf("-l  gives the listing file name (.LST)\n");
-    printf("    -l - enables listing to stdout.\n");
-    printf("-m  load RT-11 compatible macro library from which\n");
-    printf("    .MCALLed macros can be found.\n");
-    printf("    Multiple allowed.\n");
-    printf("-o  gives the object file name (.OBJ)\n");
-    printf("-p  gives the name of a directory in which .MCALLed macros may be found.\n");
-    printf("    Sets environment variable \"MCALL\".\n");
+    printf("-d\tdisable <option> (see below)\n");
+    printf("-e\tenable <option> (see below)\n");
+    printf("-h\tprint this help\n");
+    printf("-l\tgives the listing file name (.LST)\n");
+    printf("\t-l - enables listing to stdout.\n");
+    printf("-m\tload RSX-11 or RT-11 compatible macro library from which\n");
+    printf("\t.MCALLed macros can be found.\n");
+    printf("\tMultiple allowed.\n");
+    printf("-o\tgives the object file name (.OBJ)\n");
+    printf("-Pnn\tsets the size of a listing page to nn lines\n");
+    printf("-p\tgives the name of a directory in which .MCALLed macros may be found.\n");
+    printf("\tSets environment variable \"MCALL\".\n");
+    printf("-I\tgives the name of a directory in which .included files may be found.\n");
+    printf("\tSets environment variable \"INCLUDE\".\n");
 
-    printf("-v  print version\n");
-    printf("    Violates DEC standard, but sometimes needed\n");
-    printf("-x  invokes macro11 to expand the contents of the registered macro \n");
-    printf("    libraries (see -m) into individual .MAC files in the current\n");
-    printf("    directory.  No assembly of input is done.\n");
-    printf("    This must be the last command line option!\n");
-    printf("-ysl Syntax extension: change length of symbols from \n");
-    printf("     default = %d to larger values, max %d.\n", SYMMAX_DEFAULT, SYMMAX_MAX);
-    printf("-yus Syntax extension: allow underscore \"_\" in symbols.\n");
+    printf("-v\tprint version\n");
+    printf("\tViolates DEC standard, but sometimes needed\n");
+    printf("-x\tinvokes macro11 to expand the contents of the registered macro \n");
+    printf("\tlibraries (see -m) into individual .MAC files in the current\n");
+    printf("\tdirectory.  No assembly of input is done.\n");
+    printf("\tThis must be the last command line option!\n");
+    printf("-rsx\tGenerate RSX style object files%s.\n",
+            (rt11 ? "": " (default)"));
+    printf("-rt11\tGenerate RT11 style object files.%s\n",
+            (rt11 ? " (default)": ""));
+    printf("-ysl\tSyntax extension: change length of symbols from \n");
+    printf("\tdefault = %d to larger values, max %d.\n", SYMMAX_DEFAULT, SYMMAX_MAX);
+    printf("-yus\tSyntax extension: allow underscore \"_\" in symbols.\n");
+    printf("-yl1\tExtension: list the first pass too, not only the second.\n");
     printf("\n");
     printf("Options for -e and -d are:\n");
-    printf("AMA (off)    - absolute addressing (versus PC-relative)\n");
-    printf("               See .ENABL AMA, .DSABL AMA\n");
-    printf("GBL (on)     - treat unresolved symbols as globals, linker must resolve.\n");
-    printf("               If disabled, unresolved globals are errors.\n");
-    printf("               See .ENABL GBL, .DSABL GBL\n");
-    printf("ME  (on)     - list macro expansion (no func)\n");
-    printf("BEX (on)     - show binary (no func)\n");
-    printf("MD  (on)     - list macro/rept definition\n");
-    printf("LISTHEX (on) - list assembled code in hex notation (standard is octal)\n");
+    printf("AMA (off) - absolute addressing (versus PC-relative)\n");
+    printf("            See .ENABL AMA, .DSABL AMA\n");
+    printf("GBL (on)  - treat unresolved symbols as globals, linker must resolve.\n");
+    printf("            If disabled, unresolved globals are errors.\n");
+    printf("            See .ENABL GBL, .DSABL GBL\n");
+    printf("ME  (on)  - list macro expansion (no func)\n");
+    printf("BEX (on)  - show binary (no func)\n");
+    printf("MD  (on)  - list macro/rept definition\n");
     printf("\n");
 }
 
@@ -149,6 +173,41 @@ void usage(char *message) {
     exit(EXIT_FAILURE);
 }
 
+void prepare_pass(int this_pass, STACK *stack, int nr_files, char **fnames)
+{
+    int i;
+
+    stack_init(stack);
+
+    /* Push the files onto the input stream in reverse order */
+    for (i = nr_files - 1; i >= 0; --i) {
+        STREAM         *str = new_file_stream(fnames[i]);
+
+        if (str == NULL) {
+            report(NULL, "Unable to open file %s\n", fnames[i]);
+            exit(EXIT_FAILURE);
+        }
+        stack_push(stack, str);
+    }
+
+    DOT = 0;
+    current_pc->section = &blank_section;
+    last_dot_section = NULL;
+    pass = this_pass;
+    stmtno = 0;
+    lsb = 0;
+    next_lsb = 1;
+    lsb_used = 0;
+    last_macro_lsb = -1;
+    last_locsym = 32767;
+    last_cond = -1;
+    sect_sp = -1;
+    suppressed = 0;
+    enabl_lc = 1;
+    enabl_lcm = 0;
+    enabl_ama = opt_enabl_ama;
+    program_title[0] = current_subtitle[0] = '\0';  // [RLA] 
+}
 
 int main(
     int argc,
@@ -157,9 +216,7 @@ int main(
     char           *fnames[32];
     int             nr_files = 0;
     FILE           *obj = NULL;
-    static char     line[1024];
     TEXT_RLD        tr;
-    char           *macname = NULL;
     char           *objname = NULL;
     char           *lstname = NULL;
     int             arg;
@@ -177,74 +234,83 @@ int main(
             char           *cp;
 
             cp = argv[arg] + 1;
-            if (!stricmp(cp, "h")) {
+            if (!strcasecmp(cp, "h")) {
                 print_help();
-            } else if (!stricmp(cp, "v")) {
+            } else if (!strcasecmp(cp, "v")) {
                 print_version(stderr);
-            } else if (!stricmp(cp, "e")) {
+            } else if (!strcasecmp(cp, "e")) {
                 /* Followed by options to enable */
                 /* Since /SHOW and /ENABL option names don't overlap,
                    I consolidate. */
-                if(arg >= argc-1 || !isalpha(*argv[arg+1])) {
+                if(arg >= argc-1 || !isalpha((unsigned char)*argv[arg+1])) {
                     usage("-e must be followed by an option to enable\n");
                 }
                 upcase(argv[++arg]);
                 enable_tf(argv[arg], 1);
-            } else if (!stricmp(cp, "d")) {
+            } else if (!strcasecmp(cp, "d")) {
                 /* Followed by an option to disable */
-                if(arg >= argc-1 || !isalpha(*argv[arg+1])) {
+                if(arg >= argc-1 || !isalpha((unsigned char)*argv[arg+1])) {
                     usage("-d must be followed by an option to disable\n");
                 }
                 upcase(argv[++arg]);
                 enable_tf(argv[arg], 0);
-            } else if (!stricmp(cp, "m")) {
-                /* Macro library */
-                /* This option gives the name of an RT-11 compatible
-                   macro library from which .MCALLed macros can be
-                   found. */
-                if(arg >= argc-1 || *argv[arg+1] == '-') {
-                    usage("-m must be followed by a macro library file name\n");
-                }
-                arg++;
-                mlbs[nr_mlbs] = mlb_open(argv[arg]);
-                if (mlbs[nr_mlbs] == NULL) {
-                    fprintf(stderr, "Unable to register macro library %s\n", argv[arg]);
-                    exit(EXIT_FAILURE);
-                }
-                nr_mlbs++;
-            } else if (!stricmp(cp, "p")) {
+            }
+            else if (!strcasecmp(cp, "m")) {
+              /* Macro library */
+              /* This option gives the name of an RT-11 compatible
+                 macro library from which .MCALLed macros can be
+                 found. */
+              if (arg >= argc - 1 || *argv[arg + 1] == '-') {
+                usage("-m must be followed by a macro library file name\n");
+              }
+              arg++;
+              int allow_olb = strcmp(argv[argc - 1], "-x") == 0;
+              mlbs[nr_mlbs] = mlb_open(argv[arg], allow_olb);
+              if (mlbs[nr_mlbs] == NULL) {
+                fprintf(stderr, "Unable to register macro library %s\n", argv[arg]);
+                exit(EXIT_FAILURE);
+              }
+              nr_mlbs++;
+            } else if (*cp == 'P') {
+              lines_per_page = strtoul(++cp, &cp, 10);
+              if ((*cp != '\0') || (lines_per_page < 10) || (lines_per_page > 100))
+                usage("-P must be followed by the number of lines per page\n");
+            } else if (!strcasecmp(cp, "p")) {
                 /* P for search path */
                 /* The -p option gives the name of a directory in
                    which .MCALLed macros may be found.  */  {
-                    char           *env = getenv("MCALL");
-                    char           *temp;
 
                     if(arg >= argc-1 || *argv[arg+1] == '-') {
                         usage("-p must be followed by a macro search directory\n");
                     }
 
-                    if (env == NULL)
-                        env = "";
-
-                    temp = memcheck(malloc(strlen(env) + strlen(argv[arg + 1]) + 8));
-                    strcpy(temp, "MCALL=");
-                    strcat(temp, env);
-                    strcat(temp, PATHSEP);
-                    strcat(temp, argv[arg + 1]);
-                    putenv(temp);
+                    append_env("MCALL", argv[arg+1]);
                     arg++;
                 }
-            } else if (!stricmp(cp, "o")) {
+            } else if (!strcasecmp(cp, "I")) {
+                /* I for include path */
+                /* The -I option gives the name of a directory in
+                   which .included files may be found.  */  {
+
+                    if(arg >= argc-1 || *argv[arg+1] == '-') {
+                        usage("-I must be followed by a include file search directory\n");
+                    }
+                    append_env("INCLUDE", argv[arg+1]);
+
+                    arg++;
+                }
+            } else if (!strcasecmp(cp, "o")) {
                 /* The -o option gives the object file name (.OBJ) */
                 if(arg >= argc-1 || *argv[arg+1] == '-') {
                     usage("-o must be followed by the object file name\n");
                 }
                 ++arg;
                 objname = argv[arg];
-            } else if (!stricmp(cp, "l")) {
+            } else if (!strcasecmp(cp, "l")) {
                 /* The option -l gives the listing file name (.LST) */
                 /* -l - enables listing to stdout. */
-                if(arg >= argc-1 || *argv[arg+1] == '-') {
+                if(arg >= argc-1 ||
+                        (argv[arg+1][0] == '-' && argv[arg+1][1] != '\0')) {
                     usage("-l must be followed by the listing file name (- for standard output)\n");
                 }
                 lstname = argv[++arg];
@@ -252,38 +318,46 @@ int main(
                     lstfile = stdout;
                 else
                     lstfile = fopen(lstname, "w");
-            } else if (!stricmp(cp, "x")) {
+            } else if (!strcasecmp(cp, "x")) {
                 /* The -x option invokes macro11 to expand the
                    contents of the registered macro libraries (see -m)
                    into individual .MAC files in the current
                    directory.  No assembly of input is done.  This
                    must be the last command line option.  */
-                int             i;
+                int             m;
 
                 if(arg != argc-1) {
                     usage("-x must be the last option\n");
                 }
-
-                for (i = 0; i < nr_mlbs; i++)
-                    mlb_extract(mlbs[i]);
+                for (m = 0; m < nr_mlbs; m++)
+                    mlb_extract(mlbs[m]);
                 return EXIT_SUCCESS;
-            } else if (!stricmp(cp, "ysl")) {
+            } else if (!strcasecmp(cp, "ysl")) {
                 /* set symbol_len */
                 if (arg >= argc-1) {
                     usage("-s must be followed by a number\n");
                 } else {
-                char           *s = argv[++arg];
-                char           *endp;
-                int             sl = strtol(s, &endp, 10);
+                    char           *s = argv[++arg];
+                    char           *endp;
+                    int             sl = strtol(s, &endp, 10);
 
-                if (*endp || sl < SYMMAX_DEFAULT || sl > SYMMAX_MAX) {
+                    if (*endp || sl < SYMMAX_DEFAULT || sl > SYMMAX_MAX) {
                         usage("-s must be followed by a number\n");
+                    }
+                    symbol_len = sl;
                 }
-                symbol_len = sl;
-                }
-            } else if (!stricmp(cp, "yus")) {
+            } else if (!strcasecmp(cp, "yus")) {
                 /* allow underscores */
                 symbol_allow_underscores = 1;
+            } else if (!strcasecmp(cp, "yl1")) {
+                /* list the first pass, in addition to the second */
+                list_pass_0++;
+            } else if (!strcasecmp(cp, "yd")) {
+                enabl_debug++;
+            } else if (!strcasecmp(cp, "rt11")) {
+                rt11 = 1;
+            } else if (!strcasecmp(cp, "rsx")) {
+                rt11 = 0;
             } else {
                 fprintf(stderr, "Unknown option %s\n", argv[arg]);
                 print_help();
@@ -300,41 +374,18 @@ int main(
     }
 
     add_symbols(&blank_section);
-
-    text_init(&tr, NULL, 0);
-
-    module_name = memcheck(strdup(""));
-
+    module_name = memcheck(strdup(".MAIN."));
     xfer_address = new_ex_lit(1);      /* The undefined transfer address */
 
-    stack_init(&stack);
-    /* Push the files onto the input stream in reverse order */
-    for (i = nr_files - 1; i >= 0; --i) {
-        STREAM         *str = new_file_stream(fnames[i]);
-
-        if (str == NULL) {
-            report(NULL, "Unable to open file %s\n", fnames[i]);
-            exit(EXIT_FAILURE);
-        }
-        stack_push(&stack, str);
-    }
-
-    DOT = 0;
-    current_pc->section = &blank_section;
-    last_dot_section = NULL;
-    pass = 0;
-    stmtno = 0;
-    lsb = 0;
-    last_lsb = -1;
-    last_locsym = 32767;
-    last_cond = -1;
-    sect_sp = -1;
-    suppressed = 0;
-
+    text_init(&tr, NULL, 0);
+    prepare_pass(0, &stack, nr_files, fnames);
     assemble_stack(&stack, &tr);
 
+    if (list_pass_0 && lstfile) {
+        list_symbol_table();
+    }
 #if 0
-    if (enabl_debug)
+    if (enabl_debug > 1)
         dump_all_macros();
 #endif
 
@@ -347,34 +398,9 @@ int main(
     sym_hist(&symbol_st, "symbol_st"); /* Draw a symbol table histogram */
 #endif
 
-
-    text_init(&tr, obj, 0);
-
-    stack_init(&stack);                /* Superfluous... */
-    /* Re-push the files onto the input stream in reverse order */
-    for (i = nr_files - 1; i >= 0; --i) {
-        STREAM         *str = new_file_stream(fnames[i]);
-
-        if (str == NULL) {
-            report(NULL, "Unable to open file %s\n", fnames[i]);
-            exit(EXIT_FAILURE);
-        }
-        stack_push(&stack, str);
-    }
-
-    DOT = 0;
-    current_pc->section = &blank_section;
-    last_dot_section = NULL;
-
-    pass = 1;
-    stmtno = 0;
-    lsb = 0;
-    last_lsb = -1;
-    last_locsym = 32767;
     pop_cond(-1);
-    sect_sp = -1;
-    suppressed = 0;
-
+    text_init(&tr, obj, 0);
+    prepare_pass(1, &stack, nr_files, fnames);
     errcount = assemble_stack(&stack, &tr);
 
     text_flush(&tr);
@@ -395,6 +421,10 @@ int main(
 
     if (errcount > 0)
         fprintf(stderr, "%d Errors\n", errcount);
+
+    if (lstfile) {
+        list_symbol_table();
+    }
 
     if (lstfile && strcmp(lstname, "-") != 0)
         fclose(lstfile);

@@ -1,5 +1,3 @@
-#define EXTREE__C
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,12 +16,17 @@
    to go away. Hopefully the compiler will realize when it's dead, and
    eliminate it. */
 
-static void print_tree(
+void print_tree(
     FILE *printfile,
     EX_TREE *tp,
     int depth)
 {
     SYMBOL         *sym;
+
+    if (tp == NULL) {
+        fprintf(printfile, "(null)");
+        return;
+    }
 
     switch (tp->type) {
     case EX_LIT:
@@ -109,6 +112,14 @@ static void print_tree(
         print_tree(printfile, tp->data.child.right, depth + 4);
         fputc('>', printfile);
         break;
+
+    case EX_LSH:
+        fputc('<', printfile);
+        print_tree(printfile, tp->data.child.left, depth + 4);
+        fputc('_', printfile);
+        print_tree(printfile, tp->data.child.right, depth + 4);
+        fputc('>', printfile);
+        break;
     }
 
     if (depth == 0)
@@ -125,21 +136,20 @@ void free_tree(
     case EX_TEMP_SYM:
         free(tp->data.symbol->label);
         free(tp->data.symbol);
+        break;
+
     case EX_LIT:
     case EX_SYM:
-        free(tp);
         break;
 
     case EX_COM:
     case EX_NEG:
         free_tree(tp->data.child.left);
-        free(tp);
         break;
 
     case EX_ERR:
         if (tp->data.child.left)
             free_tree(tp->data.child.left);
-        free(tp);
         break;
 
     case EX_ADD:
@@ -148,11 +158,12 @@ void free_tree(
     case EX_DIV:
     case EX_AND:
     case EX_OR:
+    case EX_LSH:
         free_tree(tp->data.child.left);
         free_tree(tp->data.child.right);
-        free(tp);
         break;
     }
+    free(tp);
 }
 
 /* new_temp_sym allocates a new EX_TREE entry of type "TEMPORARY
@@ -179,6 +190,76 @@ static EX_TREE *new_temp_sym(
     tp->data.symbol = sym;
 
     return tp;
+}
+
+SYMBOL *dup_symbol(
+    SYMBOL *sym)
+{
+    SYMBOL *res;
+
+    if (sym == NULL) {
+        return NULL;
+    }
+
+    res = memcheck(malloc(sizeof(SYMBOL)));
+    res->label = memcheck(strdup(sym->label));
+    res->flags = sym->flags;
+    res->stmtno = sym->stmtno;
+    res->next = NULL;
+    res->section = sym->section;
+    res->value = sym->value;
+
+    return res;
+}
+
+
+EX_TREE *dup_tree(
+    EX_TREE *tp)
+{
+    EX_TREE *res = NULL;
+
+    if (tp == NULL) {
+        return NULL;
+    }
+
+    res = new_ex_tree();
+    res->type = tp->type;
+    res->cp = tp->cp;
+
+    switch (tp->type) {
+    case EX_UNDEFINED_SYM:
+    case EX_TEMP_SYM:
+        res->data.symbol = dup_symbol(tp->data.symbol);
+        break;
+
+    /* The symbol reference in EX_SYM is not freed in free_tree() */
+    case EX_SYM:
+        res->data.symbol = tp->data.symbol;
+        break;
+
+    case EX_LIT:
+        res->data.lit = tp->data.lit;
+        break;
+
+    case EX_COM:
+    case EX_NEG:
+    case EX_ERR:
+        res->data.child.left = dup_tree(tp->data.child.left);
+        break;
+
+    case EX_ADD:
+    case EX_SUB:
+    case EX_MUL:
+    case EX_DIV:
+    case EX_AND:
+    case EX_OR:
+    case EX_LSH:
+        res->data.child.left = dup_tree(tp->data.child.left);
+        res->data.child.right = dup_tree(tp->data.child.right);
+        break;
+    }
+
+    return res;
 }
 
 #define RELTYPE(tp) (((tp)->type == EX_SYM || (tp)->type == EX_TEMP_SYM) && \
@@ -240,16 +321,12 @@ EX_TREE        *evaluate(
             }
 
             /* Copy other symbol reference verbatim. */
-            res = new_ex_tree();
-            res->type = EX_SYM;
-            res->data.symbol = tp->data.symbol;
-            res->cp = tp->cp;
+            res = dup_tree(tp);
             break;
         }
 
     case EX_LIT:
-        res = new_ex_tree();
-        *res = *tp;
+        res = dup_tree(tp);
         break;
 
     case EX_TEMP_SYM:
@@ -269,7 +346,7 @@ EX_TREE        *evaluate(
         } else {
             /* Copy verbatim. */
             res = new_ex_tree();
-            res->type = EX_NEG;
+            res->type = EX_COM;
             res->cp = tp->cp;
             res->data.child.left = tp;
         }
@@ -282,7 +359,9 @@ EX_TREE        *evaluate(
             /* negate literal */
             res = new_ex_lit((unsigned) -(int) tp->data.lit);
             free_tree(tp);
-        } else if (tp->type == EX_SYM || tp->type == EX_TEMP_SYM) {
+        } else if (tp->type == EX_TEMP_SYM ||
+                   (tp->type == EX_SYM &&
+                    (tp->data.symbol->flags & SYMBOLFLAG_DEFINITION))) {
             /* Make a temp sym with the negative value of the given
                sym (this works for symbols within relocatable sections
                too) */
@@ -300,7 +379,7 @@ EX_TREE        *evaluate(
 
     case EX_ERR:
         /* Copy */
-        res = ex_err(tp->data.child.left, tp->cp);
+        res = dup_tree(tp);
         break;
 
     case EX_ADD:
@@ -375,10 +454,7 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_ADD;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_ADD, left, right);
         }
         break;
 
@@ -454,10 +530,7 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_SUB;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_SUB, left, right);
         }
         break;
 
@@ -519,10 +592,7 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_MUL;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_MUL, left, right);
         }
         break;
 
@@ -550,10 +620,7 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_DIV;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_DIV, left, right);
         }
         break;
 
@@ -598,10 +665,7 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_AND;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_AND, left, right);
         }
         break;
 
@@ -646,12 +710,64 @@ EX_TREE        *evaluate(
             }
 
             /* Anything else returns verbatim */
-            res = new_ex_tree();
-            res->type = EX_OR;
-            res->data.child.left = left;
-            res->data.child.right = right;
+            res = new_ex_bin(EX_OR, left, right);
         }
         break;
+
+    case EX_LSH:
+        {
+            EX_TREE        *left,
+                           *right;
+
+            left = evaluate(tp->data.child.left, undef);
+            right = evaluate(tp->data.child.right, undef);
+
+            /* Operate if both are literals */
+            if (left->type == EX_LIT && right->type == EX_LIT) {
+                int shift = right->data.lit;
+                if (shift < 0)
+                    res = new_ex_lit(left->data.lit >> -shift);
+                else
+                    res = new_ex_lit(left->data.lit << shift);
+                free_tree(left);
+                free_tree(right);
+                break;
+            }
+
+            if (right->type == EX_LIT &&        /* Symbol shifted 0 == symbol */
+                right->data.lit == 0) {
+                res = left;
+                free_tree(right);
+                break;
+            }
+
+            if (right->type == EX_LIT &&        /* Anything shifted 16 == 0 */
+                ((int)right->data.lit > 15 ||
+                 (int)right->data.lit < -15)) {
+                res = new_ex_lit(0);
+                free_tree(left);
+                free_tree(right);
+                break;
+            }
+
+            if (right->type == EX_LIT) {        /* Other shifts become * or / */
+                int shift = right->data.lit;
+                if (shift > 0)
+                    res = new_ex_bin(EX_MUL, left, new_ex_lit(1 << shift));
+                else
+                    res = new_ex_bin(EX_DIV, left, new_ex_lit(1 << -shift));
+                free_tree(right);
+                break;
+            }
+
+            /* Anything else returns verbatim */
+            res = new_ex_bin(EX_LSH, left, right);
+        }
+        break;
+
+    default:
+        fprintf(stderr, "Invalid tree\n");
+        return NULL;
     }
 
     res->cp = cp;
@@ -664,7 +780,7 @@ EX_TREE        *evaluate(
 EX_TREE        *new_ex_tree(
     void)
 {
-    EX_TREE        *tr = memcheck(malloc(sizeof(EX_TREE)));
+    EX_TREE        *tr = memcheck(calloc(1, sizeof(EX_TREE)));
 
     return tr;
 }
@@ -699,3 +815,21 @@ EX_TREE        *new_ex_lit(
 
     return tp;
 }
+
+/* Create an EX_TREE representing a binary expression */
+
+EX_TREE        *new_ex_bin(
+    int type,
+    EX_TREE *left,
+    EX_TREE *right)
+{
+    EX_TREE        *tp;
+
+    tp = new_ex_tree();
+    tp->type = type;
+    tp->data.child.left = left;
+    tp->data.child.right = right;
+
+    return tp;
+}
+

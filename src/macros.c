@@ -47,7 +47,7 @@ STREAM         *new_macro_stream(
     STREAM *refstr,
     BUFFER *buf,
     MACRO *mac,
-    ARG *args)
+    int nargs)
 {
     MACRO_STREAM   *mstr = memcheck(malloc(sizeof(MACRO_STREAM))); {
         char           *name = memcheck(malloc(strlen(refstr->name) + 32));
@@ -58,8 +58,7 @@ STREAM         *new_macro_stream(
     }
 
     mstr->bstr.stream.vtbl = &macro_stream_vtbl;
-    /* Count the args and save their number */
-    for (mstr->nargs = 0; args; args = args->next, mstr->nargs++) ;
+    mstr->nargs = nargs;  /* for .NARG directive: nonkeyword arguments in call*/
     mstr->cond = last_cond;
     return &mstr->bstr.stream;
 }
@@ -88,11 +87,12 @@ void read_body(
 
         nextline = stack_gets(stack);  /* Now read the line */
         if (nextline == NULL) {        /* End of file. */
-            report(stack->top, "Macro body not closed\n");
+            report(stack->top, "Macro body of '%s' not closed\n", name);
             break;
         }
 
-        if (!called && (list_level - 1 + list_md) > 0) {
+        if (!(called & CALLED_NOLIST) &&
+                (list_level - 1 + list_md) > 0) {
             list_flush();
             list_source(stack->top, nextline);
         }
@@ -104,21 +104,27 @@ void read_body(
             continue;
         }
         if (op->section->type == SECTION_PSEUDO) {
-            if (op->value == P_MACRO || op->value == P_REPT || op->value == P_IRP || op->value == P_IRPC)
+            if (op->value == P_MACRO || op->value == P_REPT || op->value == P_IRP || op->value == P_IRPC) {
                 nest++;
+            }
 
             if (op->value == P_ENDM || op->value == P_ENDR) {
                 nest--;
-                /* If there's a name on the .ENDM, then */
-                /* close the body early if it matches the definition */
-                if (name && op->value == P_ENDM) {
+                /* If there's a name on the .ENDM, then
+                 * check if the name matches the one on .MACRO.
+                 * See page 7-3.
+                 * Since we don't keep a stack of nested
+                 * .MACRO names, just check for the outer one.
+                 */
+                if (nest == 0 && name && op->value == P_ENDM) {
                     cp = skipwhite(cp);
                     if (!EOL(*cp)) {
                         char           *label = get_symbol(cp, &cp, NULL);
 
                         if (label) {
-                            if (strcmp(label, name) == 0)
-                                nest = 0;       /* End of macro body. */
+                            if (strcmp(label, name) != 0) {
+                                report(stack->top, ".ENDM '%s' does not match .MACRO '%s'\n", label, name);
+                            }
                             free(label);
                         }
                     }
@@ -180,17 +186,21 @@ MACRO          *defmacro(
         return NULL;
     }
 
-    /* Allow redefinition of a macro; new definition replaces the old. */
-    mac = (MACRO *) lookup_sym(label, &macro_st);
-    if (mac) {
-        /* Remove from the symbol table... */
-        remove_sym(&mac->sym, &macro_st);
-        free_macro(mac);
+    if (!(called & CALLED_NODEFINE)) {
+        /* Allow redefinition of a macro; new definition replaces the old. */
+        mac = (MACRO *) lookup_sym(label, &macro_st);
+        if (mac) {
+            /* Remove from the symbol table... */
+            remove_sym(&mac->sym, &macro_st);
+            free_macro(mac);
+        }
     }
 
     mac = new_macro(label);
 
-    add_table(&mac->sym, &macro_st);
+    if (!(called & CALLED_NODEFINE)) {
+        add_table(&mac->sym, &macro_st);
+    }
 
     argtail = &mac->args;
     cp = skipdelim(cp);
@@ -240,7 +250,7 @@ MACRO          *defmacro(
 
         gb = new_buffer();
 
-        if (!called && !list_md) {
+        if ((called & CALLED_NOLIST) && !list_md) {
             list_level--;
             levelmod = 1;
         }
@@ -333,7 +343,7 @@ BUFFER         *subst_args(
     for (begin = in = text->buffer; in < text->buffer + text->length;) {
         char           *next;
 
-        if (issym(*in)) {
+        if (issym((unsigned char)*in)) {
             label = get_symbol(in, &next, NULL);
             if (label) {
                 if ((arg = find_arg(args, label))) {
@@ -366,32 +376,75 @@ BUFFER         *subst_args(
     return gb;                         /* Done. */
 }
 
-/* eval_arg - the language allows an argument expression to be given
+/* eval_str - the language allows an argument expression to be given
    as "\expression" which means, evaluate the expression and
    substitute the numeric value in the current radix. */
 
-void eval_arg(
+char *eval_str(
     STREAM *refstr,
-    ARG *arg)
+    char *arg)
 {
-    /* Check for value substitution */
+    EX_TREE        *value = parse_expr(arg, 0);
+    unsigned        word = 0;
+    char            temp[10];
 
-    if (arg->value[0] == '\\') {
-        EX_TREE        *value = parse_expr(arg->value + 1, 0);
-        unsigned        word = 0;
-        char            temp[10];
+    if (value->type != EX_LIT) {
+        report(refstr, "Constant value required\n");
+    } else
+        word = value->data.lit;
 
-        if (value->type != EX_LIT) {
-            report(refstr, "Constant value required\n");
-        } else
-            word = value->data.lit;
+    free_tree(value);
 
-        free_tree(value);
+    /* printf can't do base 2. */
+    my_ultoa(word & 0177777, temp, radix);
+    free(arg);
+    arg = memcheck(strdup(temp));
+    return arg;
+}
 
-        /* printf can't do base 2. */
-        my_ultoa(word & 0177777, temp, radix);
-        free(arg->value);
-        arg->value = memcheck(strdup(temp));
+/* getstring_macarg - parse a string that possibly starts with a backslash.
+ * If so, performs expression evaluation.
+ *
+ * The current implementation over-accepts some input.
+ *
+ * MACRO V05.05:
+
+        .list me
+        .macro test x
+        .blkb x
+        .endm
+
+        size = 10
+        foo = 2
+
+    ; likes:
+
+        test size
+        test \size
+        test \<size>
+        test \<size + foo>
+        test ^/size + foo/
+
+    ; dislikes:
+
+        test <\size>          ; arg is \size which could be ok in other cases
+        test size + foo       ; gets split at the space
+        test /size + foo/     ; gets split at the space
+        test \/size + foo/
+        test \^/size + foo/   ; * accepted by this version
+
+ */
+
+char           *getstring_macarg(
+    STREAM *refstr,
+    char *cp,
+    char **endp)
+{
+    if (cp[0] == '\\') {
+        char *str = getstring(cp + 1, endp);
+        return eval_str(refstr, str);         /* Perform expression evaluation */
+    } else {
+        return getstring(cp, endp);
     }
 }
 
@@ -408,13 +461,17 @@ STREAM         *expandmacro(
     char           *label;
     STREAM         *str;
     BUFFER         *buf;
+    int             nargs;
+    int             onemore;
 
     args = NULL;
     arg = NULL;
+    nargs = 0;      /* for the .NARG directive */
+    onemore = 0;
 
     /* Parse the arguments */
 
-    while (!EOL(*cp)) {
+    while (!EOL(*cp) || onemore) {
         char           *nextcp;
 
         /* Check for named argument */
@@ -431,7 +488,7 @@ STREAM         *expandmacro(
             arg = new_arg();
             arg->label = label;
             nextcp = skipwhite(nextcp + 1);
-            arg->value = getstring(nextcp, &nextcp);
+            arg->value = getstring_macarg(refstr, nextcp, &nextcp);
         } else {
             if (label)
                 free(label);
@@ -448,25 +505,25 @@ STREAM         *expandmacro(
 
             arg = new_arg();
             arg->label = memcheck(strdup(macarg->label));       /* Copy the name */
-            arg->value = getstring(cp, &nextcp);
+            arg->value = getstring_macarg(refstr, cp, &nextcp);
+            nargs++;                   /* Count nonkeyword arguments only. */
         }
 
         arg->next = args;
         args = arg;
 
-        eval_arg(refstr, arg);         /* Check for expression evaluation */
-
-        cp = skipdelim(nextcp);
+        /* If there is a trailing comma, there is an empty last argument */
+        cp = skipdelim_comma(nextcp, &onemore);
     }
 
     /* Now go back and fill in defaults */  {
         int             locsym;
 
-        if (last_lsb != lsb)
+        if (last_macro_lsb != lsb)
             locsym = last_locsym = 32768;
         else
             locsym = last_locsym;
-        last_lsb = lsb;
+        last_macro_lsb = lsb;
 
         for (macarg = mac->args; macarg != NULL; macarg = macarg->next) {
             arg = find_arg(args, macarg->label);
@@ -494,7 +551,7 @@ STREAM         *expandmacro(
 
     buf = subst_args(mac->text, args);
 
-    str = new_macro_stream(refstr, buf, mac, args);
+    str = new_macro_stream(refstr, buf, mac, nargs);
 
     free_args(args);
     buffer_free(buf);
@@ -506,7 +563,7 @@ STREAM         *expandmacro(
 /* dump_all_macros is a diagnostic function that's currently not
    used.  I used it while debugging, and I haven't removed it. */
 
-static void dump_all_macros(
+void dump_all_macros(
     void)
 {
     MACRO          *mac;
@@ -515,7 +572,7 @@ static void dump_all_macros(
     for (mac = (MACRO *) first_sym(&macro_st, &iter); mac != NULL; mac = (MACRO *) next_sym(&macro_st, &iter)) {
         dumpmacro(mac, lstfile);
 
-        printf("\n\n");
+        fprintf(lstfile, "\n\n");
     }
 }
 
@@ -539,7 +596,7 @@ MACRO          *new_macro(
     return mac;
 }
 
-/* free a macro, it's args, it's text, etc. */
+/* free a macro, its args, its text, etc. */
 void free_macro(
     MACRO *mac)
 {

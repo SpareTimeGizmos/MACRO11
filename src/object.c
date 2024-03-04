@@ -45,16 +45,23 @@ DAMAGE.
 #include <string.h>
 
 #include "rad50.h"
-
 #include "object.h"
 
-#include "macro11.h"
+#ifndef DEFAULT_OBJECTFORMAT_RT11
+#define DEFAULT_OBJECTFORMAT_RT11       0
+#endif
+
+int rt11 = DEFAULT_OBJECTFORMAT_RT11;
 
 /*
   writerec writes "formatted binary records."
   Each is preceeded by any number of 0 bytes, begins with a 1,0 pair,
   followed by 2 byte length, followed by data, followed by 1 byte
   negative checksum.
+
+  The RSX version is similar but subtly different:
+  There are no "any number of 0 bytes", nor the "1,0 pair" following it.
+  There is no checksum byte, but odd lengths are padded with a 0-byte.
 */
 
 static int writerec(
@@ -65,18 +72,27 @@ static int writerec(
     int             chksum;     /* Checksum is negative sum of all
                                    bytes including header and length */
     int             i;
-    unsigned        hdrlen = len + 4;
+    unsigned        hdrlen;
+
+    if (rt11) {
+        hdrlen = len + 4;
+    } else {
+        hdrlen = len;
+    }
 
     if (fp == NULL)
         return 1;                      /* Silently ignore this attempt to write. */
 
     chksum = 0;
-    if (fputc(FBR_LEAD1, fp) == EOF)   /* All recs begin with 1,0 */
-        return 0;
-    chksum -= FBR_LEAD1;
-    if (fputc(FBR_LEAD2, fp) == EOF)
-        return 0;
-    chksum -= FBR_LEAD2;
+
+    if (rt11) {
+        if (fputc(FBR_LEAD1, fp) == EOF)   /* All recs begin with 1,0 */
+            return 0;
+        chksum -= FBR_LEAD1;
+        if (fputc(FBR_LEAD2, fp) == EOF)
+            return 0;
+        chksum -= FBR_LEAD2;
+    } /* RT11 */
 
     i = hdrlen & 0xff;                 /* length, lsb */
     chksum -= i;
@@ -99,7 +115,13 @@ static int writerec(
 
     chksum &= 0xff;
 
-    fputc(chksum, fp);                 /* Followed by the checksum byte */
+    if (rt11) {
+        fputc(chksum, fp);             /* Followed by the checksum byte */
+    } else { /* RT11 */
+        if (hdrlen & 1) {
+            fputc(0, fp);              /* Padding to even boundary */
+    }
+} /* RT11 */
 
     return 1;                          /* Worked okay. */
 }
@@ -147,7 +169,7 @@ static int gsd_write(
     char           *cp;
     unsigned        radtbl[2];
 
-    if (gsd->offset > sizeof(gsd->buf) - 8) {
+    if (gsd->offset > (int)sizeof(gsd->buf) - 8) {
         if (!gsd_flush(gsd))
             return 0;
     }
@@ -204,6 +226,10 @@ int gsd_xfer(
     char *name,
     unsigned value)
 {
+    /*
+     * MACRO V05.05 uses 050 as flags.
+     * The Task Builder Manual shows them to be 0.
+     */
     return gsd_write(gsd, name, 010, GSD_XFER, value);
 }
 
@@ -312,8 +338,9 @@ static int text_fit(
     int txtsize,
     int rldsize)
 {
-    if (tr->txt_offset + txtsize <= sizeof(tr->text) && tr->rld_offset + rldsize <= sizeof(tr->rld)
-        && (txtsize == 0 || tr->txt_addr + tr->txt_offset - 4 == addr))
+    if (tr->txt_offset + txtsize <= (int)sizeof(tr->text) &&
+        tr->rld_offset + rldsize <= (int)sizeof(tr->rld) &&
+        (txtsize == 0 || tr->txt_addr + tr->txt_offset - 4 == addr))
         return 1;                      /* All's well. */
 
     if (!text_flush(tr))
@@ -668,8 +695,10 @@ int text_psect_offset_word(
 {
     unsigned        radtbl[2];
 
+#if OPTIMIZE_ZERO_OFFSET
     if (word == 0)
         return text_psect_word(tr, addr, size, word, name);
+#endif
 
     if (!text_fit(tr, *addr, size, 8))
         return 0;
@@ -729,8 +758,10 @@ int text_psect_displaced_offset_word(
 {
     unsigned        radtbl[2];
 
+#if OPTIMIZE_ZERO_OFFSET
     if (word == 0)
         return text_psect_displaced_word(tr, addr, size, word, name);
+#endif
 
     if (!text_fit(tr, *addr, size, 8))
         return 0;
@@ -764,7 +795,7 @@ void text_complex_begin(
 }
 
 /* text_complex_fit checks if a complex expression will fit and
-   returns a pointer to it's location */
+   returns a pointer to its location */
 
 static char    *text_complex_fit(
     TEXT_COMPLEX *tx,
@@ -772,7 +803,7 @@ static char    *text_complex_fit(
 {
     int             len;
 
-    if (tx->len + size > sizeof(tx->accum))
+    if (tx->len + size > (int)sizeof(tx->accum))
         return NULL;                   /* Expression has grown too complex. */
 
     len = tx->len;
