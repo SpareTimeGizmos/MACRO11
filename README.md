@@ -9,4 +9,6 @@ MACRO11 is an PDP-11 cross assembler, written in C, originally by Richard Krebie
   * Make .PAGE actually start a new listing page.
   * Allow form feed in source file to start a new listing page.
   * Add the current time and date to the listing.
+  * Add the -D option to define symbols on the command line.
+  * Add the -P option to set the printer page size.
   * Miscellaneous fixes to compile under Visual Studio 2022.

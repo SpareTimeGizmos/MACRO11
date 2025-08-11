@@ -1,3 +1,7 @@
+2025: Robert Armstrong <bob@jfcl.com>
+  * Add the -D option to define symbols from the command line
+  * Add the -P option to set the listing page sie
+ 
 2022: Robert Armstrong <bob@jfcl.com>
   * Set a title string via .TITLE and display it in the listing.
   * Set a subtitle string via .SBTTL and display that too.

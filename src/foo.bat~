@@ -1,0 +1,51 @@
+ Volume in drive D is GIZMOS
+ Volume Serial Number is AC30-43FE
+
+ Directory of D:\Gizmos\Software\Emulator\Tools\macro11\github\MACRO11\src
+
+08/11/2025  02:17 PM    <DIR>          .
+08/11/2025  02:17 PM    <DIR>          ..
+08/11/2025  02:13 PM                23 .gitignore
+08/11/2025  02:13 PM            78,781 assemble.c
+08/11/2025  02:13 PM               310 assemble.h
+08/11/2025  02:13 PM            21,382 assemble_aux.c
+08/11/2025  02:13 PM             1,852 assemble_aux.h
+08/11/2025  02:13 PM             4,216 assemble_globals.c
+08/11/2025  02:13 PM             3,765 assemble_globals.h
+08/11/2025  02:13 PM             4,331 CHANGES
+08/11/2025  02:13 PM            20,607 dumpobj.c
+08/11/2025  02:13 PM            24,804 extree.c
+08/11/2025  02:13 PM             1,620 extree.h
+08/11/2025  02:17 PM                 0 foo.bat
+08/11/2025  02:13 PM                 2 git-info.h
+08/11/2025  02:13 PM             1,525 LICENSE
+08/11/2025  02:13 PM             6,260 listing.c
+08/11/2025  02:13 PM             1,994 listing.h
+08/11/2025  02:13 PM            15,544 macro11.c
+08/11/2025  02:13 PM             2,152 macro11.h
+08/11/2025  02:13 PM            16,342 macros.c
+08/11/2025  02:13 PM             1,807 macros.h
+08/11/2025  02:13 PM               471 make-git-info
+08/11/2025  02:13 PM             2,652 makefile
+08/11/2025  02:13 PM            20,359 mlb-rsx.c
+08/11/2025  02:13 PM            10,282 mlb-rt11.c
+08/11/2025  02:13 PM             2,600 mlb.h
+08/11/2025  02:13 PM             2,355 mlb2.c
+08/11/2025  02:13 PM            23,352 object.c
+08/11/2025  02:13 PM            10,717 object.h
+08/11/2025  02:13 PM            33,528 parse.c
+08/11/2025  02:13 PM             1,371 parse.h
+08/11/2025  02:13 PM             4,486 rad50.c
+08/11/2025  02:13 PM             1,871 rad50.h
+08/11/2025  02:13 PM             8,447 README
+08/11/2025  02:13 PM             9,649 rept_irpc.c
+08/11/2025  02:13 PM               427 rept_irpc.h
+08/11/2025  02:13 PM             9,899 stream2.c
+08/11/2025  02:13 PM             4,408 stream2.h
+08/11/2025  02:13 PM            31,595 symbols.c
+08/11/2025  02:13 PM            10,252 symbols.h
+08/11/2025  02:13 PM             3,018 TODO
+08/11/2025  02:13 PM             7,949 util.c
+08/11/2025  02:13 PM             2,756 util.h
+              42 File(s)        409,761 bytes
+               2 Dir(s)  390,688,137,216 bytes free

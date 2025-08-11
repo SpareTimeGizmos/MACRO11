@@ -126,6 +126,7 @@ static void print_help(
     printf("<inputfile>  MACRO11 source file(s) to assemble\n");
     printf("\n");
     printf("Options:\n");
+    printf("-DNAME\tdefine symbol (optionally NAME=value)\n");
     printf("-d\tdisable <option> (see below)\n");
     printf("-e\tenable <option> (see below)\n");
     printf("-h\tprint this help\n");
@@ -238,15 +239,28 @@ int main(
                 print_help();
             } else if (!strcasecmp(cp, "v")) {
                 print_version(stderr);
-            } else if (!strcasecmp(cp, "e")) {
-                /* Followed by options to enable */
-                /* Since /SHOW and /ENABL option names don't overlap,
-                   I consolidate. */
-                if(arg >= argc-1 || !isalpha((unsigned char)*argv[arg+1])) {
-                    usage("-e must be followed by an option to enable\n");
-                }
-                upcase(argv[++arg]);
-                enable_tf(argv[arg], 1);
+            }
+            else if (!strcasecmp(cp, "e")) {
+              /* Followed by options to enable */
+              /* Since /SHOW and /ENABL option names don't overlap,
+                 I consolidate. */
+              if (arg >= argc - 1 || !isalpha((unsigned char)*argv[arg + 1])) {
+                usage("-e must be followed by an option to enable\n");
+              }
+              upcase(argv[++arg]);
+              enable_tf(argv[arg], 1);
+            } else if (*cp == 'D') {
+              // [RLA] define a symbol
+              char* symcp = ++cp;  unsigned symval = 0;
+              while (isalpha(*cp) || isdigit(*cp) || (*cp == '.') || (*cp == '$')) ++cp;
+              if (*cp == '=') {
+                // [RLA] Parse the symbol value ...
+                *cp = 0;  symval = strtoul(++cp, &cp, 10);
+              } 
+              if (*cp != 0) usage("illegal symbol name after -D\n");
+              // [RLA] Add this symbol and value to the symbol table ...
+              upcase(symcp);
+              add_sym(symcp, symval, SYMBOLFLAG_DEFINITION, &absolute_section, &symbol_st);
             } else if (!strcasecmp(cp, "d")) {
                 /* Followed by an option to disable */
                 if(arg >= argc-1 || !isalpha((unsigned char)*argv[arg+1])) {
